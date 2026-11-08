@@ -3,6 +3,83 @@ const db = window.supabase.createClient(
   'sb_publishable_ptqhR6KtS7K8Bs3L5N0dPw_f5NQiy4L'
 )
 
+let language = ['en', 'uk'].includes(localStorage.getItem('iskra_language')) ? localStorage.getItem('iskra_language') : 'en'
+const tr = value => window.iskraTranslations?.[language]?.[value] || value
+function localizedText(value) {
+  const source = String(value || '')
+  let result = tr(source)
+  if (result !== source) return result
+  const dayCount = source.match(/^(\d+) дней$/)
+  if (dayCount) return dayCount[1] + ' ' + tr('дней')
+  const phrases = Object.keys(window.iskraTranslations?.[language] || {}).sort((a, b) => b.length - a.length)
+  const prefix = phrases.find(phrase => source.startsWith(phrase))
+  return prefix ? tr(prefix) + source.slice(prefix.length) : source
+}
+const uiDateLocale = () => language === 'uk' ? 'uk-UA' : 'en-GB'
+let audioContext = null, ambientNodes = [], ambientTimer = null, musicEnabled = false
+
+function translateDom(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  while (walker.nextNode()) {
+    const node = walker.currentNode
+    const raw = node.nodeValue, value = raw.trim()
+    const translated = localizedText(value)
+    if (translated !== value) node.nodeValue = raw.replace(value, translated)
+  }
+  root.querySelectorAll('[placeholder],[title],[aria-label],[alt]').forEach(element => {
+    for (const attr of ['placeholder', 'title', 'aria-label', 'alt']) {
+      const value = element.getAttribute(attr)
+      if (value) element.setAttribute(attr, localizedText(value))
+    }
+  })
+}
+
+function setMusic(enabled) {
+  musicEnabled = enabled
+  if (enabled) {
+    const AudioContextType = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextType) { musicEnabled = false; return }
+    audioContext ||= new AudioContextType()
+    audioContext.resume()
+    const master = audioContext.createGain()
+    master.gain.value = 0.16
+    master.connect(audioContext.destination)
+    const pads = [audioContext.createOscillator(), audioContext.createOscillator(), audioContext.createOscillator()]
+    const padVolumes = [0.18, 0.105, 0.07]
+    pads.forEach((osc, index) => {
+      osc.type = 'sine'
+      osc.frequency.value = [130.81, 196, 261.63][index]
+      const gain = audioContext.createGain(); gain.gain.value = padVolumes[index]
+      osc.connect(gain); gain.connect(master); osc.start(); ambientNodes.push(osc, gain)
+    })
+    const chords = [[130.81,196,261.63],[110,164.81,220],[87.31,130.81,174.61],[98,146.83,196]]
+    let chordIndex = 0
+    ambientTimer = window.setInterval(() => {
+      chordIndex = (chordIndex + 1) % chords.length
+      pads.forEach((osc, index) => osc.frequency.setTargetAtTime(chords[chordIndex][index], audioContext.currentTime, 1.8))
+      const note = audioContext.createOscillator(), toneGain = audioContext.createGain()
+      note.type = 'sine'; note.frequency.value = [523.25,392,440,329.63][chordIndex]
+      toneGain.gain.setValueAtTime(0.0001, audioContext.currentTime)
+      toneGain.gain.exponentialRampToValueAtTime(0.035, audioContext.currentTime + 0.8)
+      toneGain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 4.8)
+      note.connect(toneGain); toneGain.connect(master); note.start(); note.stop(audioContext.currentTime + 5)
+      ambientNodes.push(note, toneGain)
+    }, 6000)
+    const note = audioContext.createOscillator(), toneGain = audioContext.createGain()
+    note.type = 'sine'; note.frequency.value = 523.25
+    toneGain.gain.setValueAtTime(0.0001, audioContext.currentTime)
+    toneGain.gain.exponentialRampToValueAtTime(0.035, audioContext.currentTime + 0.8)
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 4.8)
+    note.connect(toneGain); toneGain.connect(master); note.start(); note.stop(audioContext.currentTime + 5)
+    ambientNodes.push(master, note, toneGain)
+  } else {
+    if (ambientTimer) clearInterval(ambientTimer)
+    ambientTimer = null
+    ambientNodes.forEach(node => { try { node.stop?.(); node.disconnect?.() } catch {} })
+    ambientNodes = []
+  }
+}
+
 const cats = [['all', 'Всё', '✳'], ['3d', '3D и Blender', '◈'], ['art', 'Рисунки', '✳'], ['games', 'Игры', '⌘'], ['photo', 'Фото и видео', '▧'], ['code', 'Код и проекты', '⟡'], ['other', 'Другое', '✦']]
 const sample = [
   { id: '1', title: 'Лесной дух', description: 'Эксперимент со светом и объёмом.', category_id: '3d', profiles: { display_name: 'Мира' }, created_at: '2026-11-07', demo: true },
@@ -17,7 +94,7 @@ let activityChannel = null, notificationChannel = null, notificationChannelUser 
 const $ = selector => document.querySelector(selector)
 const esc = value => String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 const safeUrl = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? esc(url.href) : '' } catch { return '' } }
-const cat = id => cats.find(category => category[0] === id) || cats[6]
+const cat = id => { const category = cats.find(item => item[0] === id) || cats[6]; return [category[0], tr(category[1]), category[2]] }
 const initials = value => (value || 'Т').trim().split(/\s+/).map(part => part[0]).join('').toUpperCase()
 const avatarMarkup = (person, className = 'avatar') => safeUrl(person?.avatar_url) ? '<img class="' + className + '" src="' + safeUrl(person.avatar_url) + '" alt="Аватар ' + esc(person?.display_name || '') + '">' : '<span class="' + className + ' avatar-fallback">' + esc(initials(person?.display_name)) + '</span>'
 const randomGuestName = () => {
@@ -46,15 +123,18 @@ function cover(work, index = 0, className = '') {
 function render() {
   const count = streak(), random = works[Math.floor(Math.random() * works.length)] || sample[0]
   const shown = filter === 'all' ? works : works.filter(work => work.category_id === filter)
-  $('#app').innerHTML = '<header><a class="brand" href="#home">✳ искра<span>.</span></a><nav><a href="#home">Главная</a><a href="#gallery">Галерея</a><a href="#about">О проекте</a></nav><div>' + (user ? '<button id="profile" class="profile-button">' + avatarMarkup(profile, 'header-avatar') + '<span>' + esc(profile?.display_name || 'Профиль') + '</span></button>' : '<button id="login">Войти</button> <button class="small" id="signup">Начать бесплатно ↗</button>') + '</div></header><main id="home"><section class="hero"><div><small>✦ &nbsp;ТВОЁ МЕСТО ДЛЯ СОЗДАНИЯ</small><h1>Каждая идея<br>заслуживает <em>места.</em></h1><p>Собирай всё, что создаёшь: от первого наброска до готовой игры. Замечай свой рост и делись им с миром.</p><button class="primary" id="add">Добавить работу　＋</button><a class="link" href="#gallery">Исследовать галерею ↓</a></div><div class="heroart"><div class="ring"></div><div class="orb">✳</div><div class="float">✳ &nbsp; Сегодня — хороший день<small>чтобы что-нибудь создать</small></div><div class="float second">♨ &nbsp;' + count + ' дней<small>твой творческий ритм</small></div></div></section><section class="stats"><div>✳ <b>' + works.length + '</b><small>работ в галерее</small></div><div>♨ <b>' + count + ' дней</b><small>твоя серия</small></div><div>◈ <b>' + (user ? works.filter(work => work.owner_id === user.id).length : 0) + '</b><small>твоих работ</small></div><span>Каждая работа — часть твоей истории ↗</span></section><section class="section"><small>СЛУЧАЙНАЯ ИСКРА</small><h2>Вдохновение рядом <button id="shuffle">⟳ Другая работа</button></h2><article class="featured clickable" data-work="' + esc(random.id) + '">' + cover(random, 1) + '<div><label>' + cat(random.category_id)[2] + ' ' + cat(random.category_id)[1] + '</label><h3>' + esc(random.title) + '</h3><p>' + esc(random.description) + '</p><small>СОЗДАТЕЛЬ<br><b>' + esc(random.profiles?.display_name) + '</b></small><span class="open-hint">Открыть работу ↗</span></div></article></section><section class="section" id="gallery"><small>ТВОЯ ВСЕЛЕННАЯ</small><h2>Галерея работ</h2><div class="filters">' + cats.map(category => '<button data-filter="' + category[0] + '" class="filter ' + (filter === category[0] ? 'on' : '') + '">' + category[2] + ' ' + category[1] + '</button>').join('') + ' <button id="add2" class="outline">＋ Добавить работу</button></div><div class="grid">' + shown.map((work, index) => '<article class="work clickable" data-work="' + esc(work.id) + '" tabindex="0" role="button" aria-label="Открыть работу ' + esc(work.title) + '">' + cover(work, index) + '<div><small>' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + '　·　' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + '</small><h3>' + esc(work.title) + '</h3><p>' + esc(work.description) + '</p><footer>◉ &nbsp;' + esc(work.profiles?.display_name || 'Автор') + (work.demo ? '<i>пример</i>' : '') + '</footer></div></article>').join('') + '</div></section><section class="streak"><b>♨</b><div><small>ТВОЙ ТЕМП — ТВОИ ПРАВИЛА</small><h2>Не нужно быть идеальным.<br><em>Просто продолжай.</em></h2><p>Добавь хотя бы одну работу за день — и огонёк останется с тобой.</p></div><aside>ТВОЙ ОГОНЁК<h3>♨ ' + count + ' дней</h3></aside></section><section class="join" id="about"><div><small>НАЧНИ СЕГОДНЯ</small><h2>Твои идеи заслуживают<br>быть <em>увиденными.</em></h2></div><button id="join" class="primary">' + (user ? 'Добавить работу' : 'Создать свой профиль') + ' ↗</button></section></main>' + sideFeed() + '<footer class="bottom"><b>✳ искра.</b><span>Место, где идеи становятся историей.</span></footer>' + (modal ? dialog() : '') + (selectedWorkId ? detailDialog() : '')
+  $('#app').innerHTML = '<header><a class="brand" href="#home">✳ искра<span>.</span></a><nav><a href="#home">Главная</a><a href="#gallery">Галерея</a><a href="#about">О проекте</a></nav><div class="header-tools"><select id="language" aria-label="Language"><option value="en" ' + (language === 'en' ? 'selected' : '') + '>English</option><option value="uk" ' + (language === 'uk' ? 'selected' : '') + '>Українська</option></select>' + (user ? '<button id="profile" class="profile-button">' + avatarMarkup(profile, 'header-avatar') + '<span>' + esc(profile?.display_name || 'Профиль') + '</span></button>' : '<button id="login">Войти</button> <button class="small" id="signup">Начать бесплатно ↗</button>') + '</div></header><main id="home"><section class="hero"><div><small>✦ &nbsp;ТВОЁ МЕСТО ДЛЯ СОЗДАНИЯ</small><h1>Каждая идея<br>заслуживает <em>места.</em></h1><p>Собирай всё, что создаёшь: от первого наброска до готовой игры. Замечай свой рост и делись им с миром.</p><button class="primary" id="add">Добавить работу　＋</button><a class="link" href="#gallery">Исследовать галерею ↓</a></div><div class="heroart"><div class="ring"></div><div class="orb">✳</div><div class="float">✳ &nbsp; Сегодня — хороший день<small>чтобы что-нибудь создать</small></div><div class="float second">♨ &nbsp;' + count + ' дней<small>твой творческий ритм</small></div></div></section><section class="stats"><div>✳ <b>' + works.length + '</b><small>работ в галерее</small></div><div>♨ <b>' + count + ' дней</b><small>твоя серия</small></div><div>◈ <b>' + (user ? works.filter(work => work.owner_id === user.id).length : 0) + '</b><small>твоих работ</small></div><span>Каждая работа — часть твоей истории ↗</span></section><section class="section"><small>СЛУЧАЙНАЯ ИСКРА</small><h2>Вдохновение рядом <button id="shuffle">⟳ Другая работа</button></h2><article class="featured clickable" data-work="' + esc(random.id) + '">' + cover(random, 1) + '<div><label>' + cat(random.category_id)[2] + ' ' + cat(random.category_id)[1] + '</label><h3>' + esc(random.title) + '</h3><p>' + esc(random.description) + '</p><small>СОЗДАТЕЛЬ<br><b>' + esc(random.profiles?.display_name) + '</b></small><span class="open-hint">Открыть работу ↗</span></div></article></section><section class="section" id="gallery"><small>ТВОЯ ВСЕЛЕННАЯ</small><h2>Галерея работ</h2><div class="filters">' + cats.map(category => '<button data-filter="' + category[0] + '" class="filter ' + (filter === category[0] ? 'on' : '') + '">' + category[2] + ' ' + tr(category[1]) + '</button>').join('') + ' <button id="add2" class="outline">＋ Добавить работу</button></div><div class="grid">' + shown.map((work, index) => '<article class="work clickable" data-work="' + esc(work.id) + '" tabindex="0" role="button" aria-label="Открыть работу ' + esc(work.title) + '">' + cover(work, index) + '<div><small>' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + '　·　' + new Date(work.created_at).toLocaleDateString(uiDateLocale(), { day: 'numeric', month: 'short' }) + '</small><h3>' + esc(work.title) + '</h3><p>' + esc(work.description) + '</p><footer>◉ &nbsp;' + esc(work.profiles?.display_name || 'Автор') + (work.demo ? '<i>пример</i>' : '') + '</footer></div></article>').join('') + '</div></section><section class="streak"><b>♨</b><div><small>ТВОЙ ТЕМП — ТВОИ ПРАВИЛА</small><h2>Не нужно быть идеальным.<br><em>Просто продолжай.</em></h2><p>Добавь хотя бы одну работу за день — и огонёк останется с тобой.</p></div><aside>ТВОЙ ОГОНЁК<h3>♨ ' + count + ' дней</h3></aside></section><section class="join" id="about"><div><small>НАЧНИ СЕГОДНЯ</small><h2>Твои идеи заслуживают<br>быть <em>увиденными.</em></h2></div><button id="join" class="primary">' + (user ? 'Добавить работу' : tr('Создать свой профиль') + ' ↗') + '</button></section></main>' + sideFeed() + '<footer class="bottom"><b>✳ искра.</b><span>Место, где идеи становятся историей.</span></footer><div class="sound-widget"><button id="musicToggle" aria-pressed="' + musicEnabled + '">♫ ' + tr(musicEnabled ? 'Музыка включена' : 'Тихая музыка') + '</button><a href="https://open.spotify.com/playlist/5lGKRwxSagVMuHHDtzq7YL?utm_source=openai&utm_medium=chatgpt&go=1&nap_web=1&request_id=04532973-bf26-4673-ac3f-206836d53b10" target="_blank" rel="noopener noreferrer">' + tr('Spotify mix ↗') + '</a></div>' + (modal ? dialog() : '') + (selectedWorkId ? detailDialog() : '')
+  document.documentElement.lang = language
+  document.title = language === 'uk' ? 'искра — твоя творча історія' : 'искра — your creative life'
+  translateDom($('#app'))
   bind()
 }
 
 function sideFeed() {
-  const recent = feedWorks.map(work => '<button class="activity-work" data-work="' + esc(work.id) + '">' + avatarMarkup(work.profiles, 'activity-avatar') + '<span><b>' + esc(work.profiles?.display_name || 'Автор') + '</b><small>добавил работу</small><strong>' + esc(work.title) + '</strong></span><time>' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) + '</time></button>').join('')
+  const recent = feedWorks.map(work => '<button class="activity-work" data-work="' + esc(work.id) + '">' + avatarMarkup(work.profiles, 'activity-avatar') + '<span><b>' + esc(work.profiles?.display_name || 'Автор') + '</b><small>добавил работу</small><strong>' + esc(work.title) + '</strong></span><time>' + new Date(work.created_at).toLocaleDateString(uiDateLocale(), { day: 'numeric', month: 'short' }) + '</time></button>').join('')
   const events = notifications.map(item => {
-    const phrase = item.notification_type === 'work_like' ? 'поставил лайк работе' : item.notification_type === 'work_dislike' ? 'поставил дизлайк работе' : 'ответил на твой комментарий к работе'
-    return '<button class="feed-notification ' + (item.is_read ? '' : 'unread') + '" data-notification="' + esc(item.id) + '" data-work-id="' + esc(item.work_id || '') + '"><span class="notification-dot">' + (item.notification_type === 'work_like' ? '♥' : item.notification_type === 'work_dislike' ? '👎' : '↩') + '</span><span><b>' + esc(item.actor_name) + '</b> ' + phrase + ' <strong>«' + esc(item.work_title) + '»</strong><time>' + new Date(item.created_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time></span></button>'
+    const phrase = item.notification_type === 'work_like' ? 'поставил лайк работе' : item.notification_type === 'work_dislike' ? 'поставил дизлайк работе' : item.notification_type === 'work_comment' ? 'оставил комментарий к твоей работе' : 'ответил на твой комментарий к работе'
+    return '<button class="feed-notification ' + (item.is_read ? '' : 'unread') + '" data-notification="' + esc(item.id) + '" data-work-id="' + esc(item.work_id || '') + '" data-comment-id="' + esc(item.comment_id || '') + '"><span class="notification-dot">' + (item.notification_type === 'work_like' ? '♥' : item.notification_type === 'work_dislike' ? '👎' : item.notification_type === 'work_comment' ? '✎' : '↩') + '</span><span><b>' + esc(item.actor_name) + '</b> ' + tr(phrase) + ' <strong>«' + esc(item.work_title) + '»</strong><time>' + new Date(item.created_at).toLocaleString(uiDateLocale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time></span></button>'
   }).join('')
   return '<aside class="activity-feed"><section class="feed-section"><small>СООБЩЕСТВО</small><h3>Новые работы</h3><div class="activity-list">' + (recent || '<p class="feed-empty">Пока никто не добавил работ.</p>') + '</div></section>' + (user ? '<section class="feed-section personal-feed"><small>ТОЛЬКО ДЛЯ ТЕБЯ</small><h3>Уведомления' + (notifications.some(item => !item.is_read) ? '<i>новые</i>' : '') + '</h3><div class="notification-list">' + (events || '<p class="feed-empty">Пока нет новых уведомлений.</p>') + '</div></section>' : '<p class="feed-login">Войди, чтобы получать личные уведомления.</p>') + '</aside>'
 }
@@ -90,7 +170,7 @@ async function refreshActivityFeed() {
 
 async function refreshNotifications(userId) {
   if (!user || user.id !== userId) return
-  const result = await db.from('notifications').select('id,notification_type,actor_name,work_title,is_read,created_at,work_id').eq('user_id', userId).order('created_at', { ascending: false }).limit(30)
+  const result = await db.from('notifications').select('id,notification_type,actor_name,work_title,is_read,created_at,work_id,comment_id').eq('user_id', userId).order('created_at', { ascending: false }).limit(30)
   if (result.error) return
   notifications = result.data || []
   if (!modal && !selectedWorkId) render()
@@ -104,10 +184,30 @@ function dialog() {
 
 function renderComment(comment, depth = 0) {
   const mine = commentReactions.find(reaction => reaction.comment_id === comment.id)?.reaction || null
-  const replies = depth < 5 ? comments.filter(reply => reply.parent_id === comment.id).map(reply => renderComment(reply, depth + 1)).join('') : ''
   const replyForm = replyToId === comment.id ? '<form class="reply-form" data-reply-form data-parent-id="' + esc(comment.id) + '"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="2" maxlength="1000" required placeholder="Ответить…"></textarea><button class="primary">Отправить</button></form>' : ''
-  const replyButton = depth < 5 ? '<button class="reply-action" data-reply-id="' + esc(comment.id) + '">Ответить</button>' : ''
-  return '<article class="comment" style="--comment-depth:' + Math.min(depth, 5) + '"><div class="comment-avatar">' + avatarMarkup({ display_name: comment.author_name, avatar_url: comment.avatar_url }, 'comment-avatar-image') + '</div><div class="comment-content"><b>' + esc(comment.author_name) + '</b><time>' + new Date(comment.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time><p>' + esc(comment.body) + '</p><div class="comment-actions"><button data-comment-reaction="' + esc(comment.id) + '" data-reaction="like" class="comment-reaction ' + (mine === 'like' ? 'selected' : '') + '">♥ ' + (comment.like_count || 0) + '</button><button data-comment-reaction="' + esc(comment.id) + '" data-reaction="dislike" class="comment-reaction ' + (mine === 'dislike' ? 'selected' : '') + '">👎 ' + (comment.dislike_count || 0) + '</button>' + replyButton + '</div>' + replyForm + '<div class="comment-replies">' + replies + '</div></div></article>'
+  const replyContext = depth ? '<small class="reply-context">В ответ на комментарий <b>' + esc(comments.find(item => item.id === comment.parent_id)?.author_name || '') + '</b></small>' : ''
+  const replyButton = '<button class="reply-action" data-reply-id="' + esc(comment.id) + '">Ответить</button>'
+  return '<article class="comment ' + (depth ? 'comment-reply' : '') + '" id="comment-' + esc(comment.id) + '" style="margin-left:' + (depth ? '20px' : '0') + '"><div class="comment-avatar">' + avatarMarkup({ display_name: comment.author_name, avatar_url: comment.avatar_url }, 'comment-avatar-image') + '</div><div class="comment-content">' + replyContext + '<b>' + esc(comment.author_name) + '</b><time>' + new Date(comment.created_at).toLocaleDateString(uiDateLocale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time><p>' + esc(comment.body) + '</p><div class="comment-actions"><button data-comment-reaction="' + esc(comment.id) + '" data-reaction="like" class="comment-reaction ' + (mine === 'like' ? 'selected' : '') + '">♥ ' + (comment.like_count || 0) + '</button><button data-comment-reaction="' + esc(comment.id) + '" data-reaction="dislike" class="comment-reaction ' + (mine === 'dislike' ? 'selected' : '') + '">👎 ' + (comment.dislike_count || 0) + '</button>' + replyButton + '</div>' + replyForm + '</div></article>'
+}
+
+function renderThread(root) {
+  const rendered = [renderComment(root, 0)], seen = new Set([root.id])
+  let frontier = [{ id: root.id, depth: 0 }]
+  while (frontier.length) {
+    const next = []
+    for (const parent of frontier) {
+      const children = comments.filter(comment => comment.parent_id === parent.id)
+      for (const child of children) {
+        if (seen.has(child.id)) continue
+        seen.add(child.id)
+        const depth = parent.depth + 1
+        rendered.push(renderComment(child, depth))
+        next.push({ id: child.id, depth })
+      }
+    }
+    frontier = next
+  }
+  return '<section class="comment-thread">' + rendered.join('') + '</section>'
 }
 
 function detailDialog() {
@@ -117,12 +217,14 @@ function detailDialog() {
   const activeImage = imageList[imageIndex]?.image_url
   const image = activeImage ? '<img class="detail-image" src="' + esc(activeImage) + '" alt="' + esc(work.title) + ' — изображение ' + (imageIndex + 1) + '">' : cover(work, Math.max(0, works.indexOf(work)), 'detail-art')
   const imageControls = imageList.length > 1 ? '<div class="image-controls"><button id="previousImage" aria-label="Предыдущее изображение">←</button><span>' + (imageIndex + 1) + ' / ' + imageList.length + '</span><button id="nextImage" aria-label="Следующее изображение">→</button></div>' : ''
-  const commentList = comments.filter(comment => !comment.parent_id).map(comment => renderComment(comment)).join('')
+  const commentList = comments.filter(comment => !comment.parent_id).map(renderThread).join('')
   const projectUrl = safeUrl(work.project_url)
-  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + imageControls + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p>' + (user && work.owner_id === user.id ? '<button id="deleteWork" class="delete-work">Удалить работу</button>' : '') + '<p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (myWorkReaction === 'like' ? 'liked' : '') + '" id="workLike" ' + (user && !work.demo ? '' : 'disabled title="Реакции доступны у опубликованных работ"') + '><span>' + (myWorkReaction === 'like' ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button><button class="dislike-button ' + (myWorkReaction === 'dislike' ? 'selected' : '') + '" id="workDislike" ' + (user && !work.demo ? '' : 'disabled title="Реакции доступны у опубликованных работ"') + '>👎</button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required ' + (work.demo ? 'disabled placeholder="У примеров комментарии отключены"' : 'placeholder="Напиши что-нибудь хорошее…"') + '></textarea><button class="primary" ' + (work.demo ? 'disabled' : '') + '>Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
+  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + imageControls + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString(uiDateLocale(), { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p>' + (user && work.owner_id === user.id ? '<button id="deleteWork" class="delete-work">Удалить работу</button>' : '') + '<p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (myWorkReaction === 'like' ? 'liked' : '') + '" id="workLike" ' + (user && !work.demo ? '' : 'disabled title="Реакции доступны у опубликованных работ"') + '><span>' + (myWorkReaction === 'like' ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button><button class="dislike-button ' + (myWorkReaction === 'dislike' ? 'selected' : '') + '" id="workDislike" ' + (user && !work.demo ? '' : 'disabled title="Реакции доступны у опубликованных работ"') + '>👎</button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required ' + (work.demo ? 'disabled placeholder="У примеров комментарии отключены"' : 'placeholder="Напиши что-нибудь хорошее…"') + '></textarea><button class="primary" ' + (work.demo ? 'disabled' : '') + '>Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
 }
 
 function bind() {
+  $('#language')?.addEventListener('change', event => { language = event.target.value; localStorage.setItem('iskra_language', language); render() })
+  $('#musicToggle')?.addEventListener('click', () => { setMusic(!musicEnabled); render() })
   $('#login')?.addEventListener('click', () => openAuth('login'))
   $('#signup')?.addEventListener('click', () => openAuth('signup'))
   $('#profile')?.addEventListener('click', () => { modal = 'profile'; render() })
@@ -148,10 +250,10 @@ function bind() {
   document.querySelectorAll('[data-reply-id]').forEach(button => button.addEventListener('click', () => { replyToId = replyToId === button.dataset.replyId ? null : button.dataset.replyId; render() }))
   document.querySelectorAll('[data-reply-form]').forEach(form => form.addEventListener('submit', replySubmit))
   document.querySelectorAll('[data-notification]').forEach(button => button.addEventListener('click', async () => {
-    const id = button.dataset.notification, workId = button.dataset.workId
+    const id = button.dataset.notification, workId = button.dataset.workId, commentId = button.dataset.commentId
     notifications = notifications.map(item => item.id === id ? { ...item, is_read: true } : item)
     await db.from('notifications').update({ is_read: true }).eq('id', id).eq('user_id', user.id)
-    if (workId) openWork(workId); else render()
+    if (workId) openWork(workId, commentId); else render()
   }))
   $('#deleteWork')?.addEventListener('click', deleteWork)
   $('#previousImage')?.addEventListener('click', () => { imageIndex = (imageIndex - 1 + workImages.length) % workImages.length; render() })
@@ -163,9 +265,9 @@ function bind() {
 function escapeDetail(event) { if (event.key === 'Escape' && selectedWorkId) closeWork() }
 function closeWork() { selectedWorkId = null; comments = []; commentReactions = []; replyToId = null; workImages = []; imageIndex = 0; detailMessage = ''; render() }
 function openAuth(nextMode) { mode = nextMode; modal = 'auth'; render() }
-function msg(text, bad = false) { const element = $('#message'); if (element) { element.textContent = text; element.className = bad ? 'error' : '' } }
+function msg(text, bad = false) { const element = $('#message'); if (element) { element.textContent = localizedText(text); element.className = bad ? 'error' : '' } }
 
-async function openWork(id) {
+async function openWork(id, focusCommentId = null) {
   selectedWorkId = id; comments = []; commentReactions = []; replyToId = null; workImages = []; imageIndex = 0; workLikes = 0; myWorkReaction = null; detailMessage = ''; render()
   const work = works.find(item => String(item.id) === String(id))
   if (work?.demo) { if (work.image_url) workImages = [{ image_url: work.image_url }]; render(); return }
@@ -196,6 +298,10 @@ async function openWork(id) {
   if (!imagesResult.error && imagesResult.data.length) workImages = imagesResult.data
   else if (work.image_url) workImages = [{ image_url: work.image_url }]
   render()
+  if (focusCommentId) {
+    const target = document.getElementById('comment-' + CSS.escape(focusCommentId))
+    if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); target.classList.add('comment-highlight'); window.setTimeout(() => target.classList.remove('comment-highlight'), 1800) }
+  }
 }
 
 async function toggleWorkReaction(reaction) {
@@ -234,7 +340,7 @@ function workImageStoragePath(imageUrl) {
 async function deleteWork() {
   const work = works.find(item => String(item.id) === String(selectedWorkId))
   if (!user || !work || work.owner_id !== user.id) return
-  if (!window.confirm('Удалить работу «' + work.title + '»? Это действие нельзя отменить.')) return
+  if (!window.confirm(tr('Удалить работу «') + work.title + tr('»? Это действие нельзя отменить.'))) return
   const button = $('#deleteWork')
   if (button) { button.disabled = true; button.textContent = 'Удаляю…' }
 
@@ -380,7 +486,7 @@ async function load() {
   } else if (!result.error && !works.some(work => !work.demo)) works = sample
   feedWorks = works.filter(work => !work.demo).slice(0, 8)
   if (user) {
-    const notificationResult = await db.from('notifications').select('id,notification_type,actor_name,work_title,is_read,created_at,work_id').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30)
+    const notificationResult = await db.from('notifications').select('id,notification_type,actor_name,work_title,is_read,created_at,work_id,comment_id').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30)
     notifications = notificationResult.data || []
   } else notifications = []
   syncRealtime()
