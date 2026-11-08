@@ -33,7 +33,7 @@ Deno.serve(async (request: Request) => {
     const password = String(body?.password || '')
 
     if (!['signup', 'login'].includes(action)) return respond(request, { error: 'Неизвестное действие.' }, 400)
-    if (!/^[a-z0-9_]{3,24}$/.test(username)) return respond(request, { error: 'Ник: от 3 до 24 латинских букв, цифр или символов _.' }, 400)
+    if (!/^[\p{L}\p{N}_]{3,24}$/u.test(username)) return respond(request, { error: 'Ник: от 3 до 24 букв, цифр или символов _.' }, 400)
     if (password.length < 6 || password.length > 128) return respond(request, { error: 'Пароль должен содержать не менее 6 символов.' }, 400)
 
     const admin = context.supabaseAdmin
