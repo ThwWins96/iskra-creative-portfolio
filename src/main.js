@@ -9,11 +9,9 @@ function localizedText(value) {
   const source = String(value || '')
   let result = tr(source)
   if (result !== source) return result
-  const dayCount = source.match(/^(\d+) дней$/)
-  if (dayCount) return dayCount[1] + ' ' + tr('дней')
   const phrases = Object.keys(window.iskraTranslations?.[language] || {}).sort((a, b) => b.length - a.length)
-  const prefix = phrases.find(phrase => source.startsWith(phrase))
-  return prefix ? tr(prefix) + source.slice(prefix.length) : source
+  for (const phrase of phrases) if (result.includes(phrase)) result = result.replaceAll(phrase, tr(phrase))
+  return result.replace(/(\d+) дней/g, (_, count) => count + ' ' + tr('дней'))
 }
 const uiDateLocale = () => language === 'uk' ? 'uk-UA' : 'en-GB'
 let audioContext = null, ambientNodes = [], ambientTimer = null, musicEnabled = false
