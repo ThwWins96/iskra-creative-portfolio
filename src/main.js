@@ -62,7 +62,7 @@ function detailDialog() {
   const imageControls = imageList.length > 1 ? '<div class="image-controls"><button id="previousImage" aria-label="Предыдущее изображение">←</button><span>' + (imageIndex + 1) + ' / ' + imageList.length + '</span><button id="nextImage" aria-label="Следующее изображение">→</button></div>' : ''
   const commentList = comments.map(comment => '<article class="comment"><div class="comment-avatar">' + esc(initials(comment.author_name)) + '</div><div><b>' + esc(comment.author_name) + '</b><time>' + new Date(comment.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time><p>' + esc(comment.body) + '</p></div></article>').join('')
   const projectUrl = safeUrl(work.project_url)
-  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + imageControls + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p><p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (likedByMe ? 'liked' : '') + '" id="likeButton" ' + (user ? '' : 'title="Войди, чтобы поставить лайк"') + '><span>' + (likedByMe ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required placeholder="Напиши что-нибудь хорошее…"></textarea><button class="primary">Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
+  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + imageControls + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p>' + (user && work.owner_id === user.id ? '<button id="deleteWork" class="delete-work">Удалить работу</button>' : '') + '<p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (likedByMe ? 'liked' : '') + '" id="likeButton" ' + (user ? '' : 'title="Войди, чтобы поставить лайк"') + '><span>' + (likedByMe ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required placeholder="Напиши что-нибудь хорошее…"></textarea><button class="primary">Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
 }
 
 function bind() {
@@ -86,6 +86,7 @@ function bind() {
   $('#detailClose')?.addEventListener('click', closeWork)
   $('#detailShade')?.addEventListener('click', event => { if (event.target.id === 'detailShade') closeWork() })
   $('#likeButton')?.addEventListener('click', toggleLike)
+  $('#deleteWork')?.addEventListener('click', deleteWork)
   $('#previousImage')?.addEventListener('click', () => { imageIndex = (imageIndex - 1 + workImages.length) % workImages.length; render() })
   $('#nextImage')?.addEventListener('click', () => { imageIndex = (imageIndex + 1) % workImages.length; render() })
   $('#commentForm')?.addEventListener('submit', commentSubmit)
@@ -126,6 +127,46 @@ async function toggleLike() {
     : await db.from('work_likes').insert({ work_id: selectedWorkId, user_id: user.id })
   if (result.error) { detailMessage = 'Не удалось сохранить лайк. Попробуй ещё раз.'; render(); return }
   await openWork(selectedWorkId)
+}
+
+function workImageStoragePath(imageUrl) {
+  try {
+    const url = new URL(imageUrl)
+    const prefix = '/storage/v1/object/public/work-media/'
+    if (url.origin !== 'https://cmgetnjnuuetganbjwdm.supabase.co' || !url.pathname.startsWith(prefix)) return null
+    const path = decodeURIComponent(url.pathname.slice(prefix.length))
+    return path.startsWith(user.id + '/') ? path : null
+  } catch { return null }
+}
+
+async function deleteWork() {
+  const work = works.find(item => String(item.id) === String(selectedWorkId))
+  if (!user || !work || work.owner_id !== user.id) return
+  if (!window.confirm('Удалить работу «' + work.title + '»? Это действие нельзя отменить.')) return
+  const button = $('#deleteWork')
+  if (button) { button.disabled = true; button.textContent = 'Удаляю…' }
+
+  const imageRows = await db.from('work_images').select('image_url').eq('work_id', work.id)
+  if (imageRows.error) {
+    detailMessage = 'Не удалось получить список изображений. Работа не удалена.'
+    render()
+    return
+  }
+  const urls = [work.image_url, ...workImages.map(image => image.image_url), ...(imageRows.data || []).map(image => image.image_url)]
+  const paths = [...new Set(urls.filter(Boolean).map(workImageStoragePath).filter(Boolean))]
+  const { error } = await db.from('works').delete().eq('id', work.id).eq('owner_id', user.id)
+  if (error) {
+    detailMessage = 'Не удалось удалить работу: ' + error.message
+    render()
+    return
+  }
+  works = works.filter(item => String(item.id) !== String(work.id))
+  closeWork()
+  if (paths.length) {
+    const cleanup = await db.storage.from('work-media').remove(paths)
+    if (cleanup.error) console.warn('Не удалось удалить некоторые файлы работы из хранилища.', cleanup.error)
+  }
+  await load()
 }
 
 async function commentSubmit(event) {
@@ -224,5 +265,6 @@ async function load() {
 
 db.auth.onAuthStateChange(() => setTimeout(load, 0))
 load()
+
 
 
