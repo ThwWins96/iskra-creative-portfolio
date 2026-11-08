@@ -174,8 +174,9 @@ async function workSubmit(event) {
       uploadedPaths.push(path)
       uploadedImages.push({ image_url: db.storage.from('work-media').getPublicUrl(path).data.publicUrl, sort_order: uploadedImages.length })
     }
-    const { data: created, error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url: uploadedImages[0]?.image_url || null }).select('*,profiles!works_owner_id_fkey(display_name,username)').single()
+    const { data: created, error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url: uploadedImages[0]?.image_url || null }).select('*').single()
     if (error) return await fail('Работа не сохранилась: ' + error.message)
+    created.profiles = { display_name: profile?.display_name || 'Автор', username: profile?.username || null }
     if (uploadedImages.length) {
       const { error: imageError } = await db.from('work_images').insert(uploadedImages.map(image => ({ work_id: created.id, ...image })))
       if (imageError) {
@@ -210,9 +211,13 @@ async function load() {
     }
     profile = query.data
   } else profile = null
-  const result = await db.from('works').select('*,profiles!works_owner_id_fkey(display_name,username)').order('created_at', { ascending: false })
-  if (result.data?.length) works = result.data
-  else if (!works.some(work => !work.demo)) works = sample
+  const result = await db.from('works').select('*').order('created_at', { ascending: false })
+  if (result.data?.length) {
+    const ownerIds = [...new Set(result.data.map(work => work.owner_id).filter(Boolean))]
+    const profileResult = ownerIds.length ? await db.from('profiles').select('id,display_name,username').in('id', ownerIds) : { data: [] }
+    const profilesById = new Map((profileResult.data || []).map(item => [item.id, item]))
+    works = result.data.map(work => ({ ...work, profiles: profilesById.get(work.owner_id) || { display_name: 'Автор' } }))
+  } else if (!result.error && !works.some(work => !work.demo)) works = sample
   if (selectedWorkId) await openWork(selectedWorkId)
   else render()
 }
