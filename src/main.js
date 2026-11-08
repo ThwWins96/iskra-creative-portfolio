@@ -11,7 +11,7 @@ const sample = [
 ]
 
 let user = null, profile = null, works = sample, filter = 'all', modal = '', mode = 'signup'
-let selectedWorkId = null, workLikes = 0, likedByMe = false, comments = [], detailMessage = ''
+let selectedWorkId = null, workLikes = 0, likedByMe = false, comments = [], detailMessage = '', workImages = [], imageIndex = 0
 const $ = selector => document.querySelector(selector)
 const esc = value => String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 const safeUrl = value => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? esc(url.href) : '' } catch { return '' } }
@@ -49,17 +49,20 @@ function render() {
 
 function dialog() {
   if (modal === 'auth') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>ТВОЯ ИСКРА НАЧИНАЕТСЯ ЗДЕСЬ</small><h2>' + (mode === 'signup' ? 'Создай свой профиль' : 'С возвращением') + '</h2><p>Сохраняй работы и отмечай каждый творческий день.</p><form id="auth">' + (mode === 'signup' ? '<label>Как тебя называть<input name="display_name" required></label>' : '') + '<label>Электронная почта<input name="email" type="email" required></label><label>Пароль<input name="password" type="password" minlength="6" required></label><button class="primary full">' + (mode === 'signup' ? 'Создать аккаунт' : 'Войти') + '</button><div id="message"></div></form><button id="switch" class="switch">' + (mode === 'signup' ? 'Уже есть аккаунт? Войти' : 'Создать аккаунт') + '</button></section></div>'
-  if (modal === 'work') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>НОВАЯ ГЛАВА</small><h2>Добавить работу</h2><form id="workform"><label>Название<input name="title" required maxlength="120"></label><label>Раздел<select name="category_id">' + cats.slice(1).map(category => '<option value="' + category[0] + '">' + category[2] + ' ' + category[1] + '</option>').join('') + '</select></label><label>Коротко о работе<textarea name="description" rows="3"></textarea></label><label>Изображение<input name="image" type="file" accept="image/*"></label><label>Ссылка на проект<input name="project_url" type="url"></label><button class="primary full">Сохранить работу</button><div id="message"></div></form></section></div>'
+  if (modal === 'work') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>НОВАЯ ГЛАВА</small><h2>Добавить работу</h2><form id="workform"><label>Название<input name="title" required maxlength="120"></label><label>Раздел<select name="category_id">' + cats.slice(1).map(category => '<option value="' + category[0] + '">' + category[2] + ' ' + category[1] + '</option>').join('') + '</select></label><label>Коротко о работе<textarea name="description" rows="3"></textarea></label><label>Изображения<input name="images" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple><small class="field-hint">Можно выбрать несколько изображений — JPG, PNG, WEBP или GIF, до 50 МБ каждое.</small></label><label>Ссылка на проект<input name="project_url" type="url"></label><button class="primary full">Сохранить работу</button><div id="message"></div></form></section></div>'
   return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>ТВОЯ СТРАНИЦА</small><h2>Настроить профиль</h2><form id="profileform"><label>Имя<input name="display_name" required value="' + esc(profile?.display_name) + '"></label><label>Имя пользователя<input name="username" pattern="[A-Za-z0-9_]+" value="' + esc(profile?.username) + '"></label><label>О себе<textarea name="bio">' + esc(profile?.bio) + '</textarea></label><button class="primary full">Сохранить профиль</button><div id="message"></div></form><button id="signout">Выйти из аккаунта</button></section></div>'
 }
 
 function detailDialog() {
   const work = works.find(item => String(item.id) === String(selectedWorkId))
   if (!work) return ''
-  const image = work.image_url ? '<img class="detail-image" src="' + esc(work.image_url) + '" alt="' + esc(work.title) + '">' : cover(work, Math.max(0, works.indexOf(work)), 'detail-art')
+  const imageList = workImages.length ? workImages : (work.image_url ? [{ image_url: work.image_url }] : [])
+  const activeImage = imageList[imageIndex]?.image_url
+  const image = activeImage ? '<img class="detail-image" src="' + esc(activeImage) + '" alt="' + esc(work.title) + ' — изображение ' + (imageIndex + 1) + '">' : cover(work, Math.max(0, works.indexOf(work)), 'detail-art')
+  const imageControls = imageList.length > 1 ? '<div class="image-controls"><button id="previousImage" aria-label="Предыдущее изображение">←</button><span>' + (imageIndex + 1) + ' / ' + imageList.length + '</span><button id="nextImage" aria-label="Следующее изображение">→</button></div>' : ''
   const commentList = comments.map(comment => '<article class="comment"><div class="comment-avatar">' + esc(initials(comment.author_name)) + '</div><div><b>' + esc(comment.author_name) + '</b><time>' + new Date(comment.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</time><p>' + esc(comment.body) + '</p></div></article>').join('')
   const projectUrl = safeUrl(work.project_url)
-  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p><p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (likedByMe ? 'liked' : '') + '" id="likeButton" ' + (user ? '' : 'title="Войди, чтобы поставить лайк"') + '><span>' + (likedByMe ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required placeholder="Напиши что-нибудь хорошее…"></textarea><button class="primary">Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
+  return '<div class="detail-shade" id="detailShade"><section class="detail-view" role="dialog" aria-modal="true" aria-label="' + esc(work.title) + '"><button class="detail-close" id="detailClose" aria-label="Закрыть">×</button><div class="detail-artwork">' + image + imageControls + '</div><aside class="detail-panel"><small class="eyebrow">' + cat(work.category_id)[2] + ' ' + cat(work.category_id)[1] + ' · ' + new Date(work.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }) + '</small><h2>' + esc(work.title) + '</h2><p class="detail-author">Автор: <b>' + esc(work.profiles?.display_name || 'Автор') + '</b></p><p class="detail-description">' + esc(work.description || 'Автор пока не добавил описание.') + '</p>' + (projectUrl ? '<a class="project-link" href="' + projectUrl + '" target="_blank" rel="noopener noreferrer">Открыть проект ↗</a>' : '') + '<div class="detail-actions"><button class="like-button ' + (likedByMe ? 'liked' : '') + '" id="likeButton" ' + (user ? '' : 'title="Войди, чтобы поставить лайк"') + '><span>' + (likedByMe ? '♥' : '♡') + '</span> <b>' + workLikes + '</b> <span>лайков</span></button></div><div class="comments-heading"><h3>Комментарии</h3><span>' + comments.length + '</span></div><div class="comment-list" id="commentList">' + (commentList || '<p class="empty-comments">Пока нет комментариев. Будь первым!</p>') + '</div><form class="comment-form" id="commentForm"><div class="commenting-as">' + (user ? 'Пишешь как <b>' + esc(profile?.display_name || 'Автор') + '</b>' : 'Твой случайный ник: <b>' + esc(guestName) + '</b>') + '</div><textarea name="body" rows="3" maxlength="1000" required placeholder="Напиши что-нибудь хорошее…"></textarea><button class="primary">Оставить комментарий</button><div id="detailMessage" class="detail-message">' + esc(detailMessage) + '</div></form></aside></section></div>'
 }
 
 function bind() {
@@ -83,29 +86,34 @@ function bind() {
   $('#detailClose')?.addEventListener('click', closeWork)
   $('#detailShade')?.addEventListener('click', event => { if (event.target.id === 'detailShade') closeWork() })
   $('#likeButton')?.addEventListener('click', toggleLike)
+  $('#previousImage')?.addEventListener('click', () => { imageIndex = (imageIndex - 1 + workImages.length) % workImages.length; render() })
+  $('#nextImage')?.addEventListener('click', () => { imageIndex = (imageIndex + 1) % workImages.length; render() })
   $('#commentForm')?.addEventListener('submit', commentSubmit)
   document.addEventListener('keydown', escapeDetail, { once: true })
 }
 
 function escapeDetail(event) { if (event.key === 'Escape' && selectedWorkId) closeWork() }
-function closeWork() { selectedWorkId = null; comments = []; detailMessage = ''; render() }
+function closeWork() { selectedWorkId = null; comments = []; workImages = []; imageIndex = 0; detailMessage = ''; render() }
 function openAuth(nextMode) { mode = nextMode; modal = 'auth'; render() }
 function msg(text, bad = false) { const element = $('#message'); if (element) { element.textContent = text; element.className = bad ? 'error' : '' } }
 
 async function openWork(id) {
-  selectedWorkId = id; comments = []; workLikes = 0; likedByMe = false; detailMessage = ''; render()
+  selectedWorkId = id; comments = []; workImages = []; imageIndex = 0; workLikes = 0; likedByMe = false; detailMessage = ''; render()
   const work = works.find(item => String(item.id) === String(id))
-  if (work?.demo) return
-  const [statsResult, likeResult, commentResult] = await Promise.all([
+  if (work?.demo) { if (work.image_url) workImages = [{ image_url: work.image_url }]; render(); return }
+  const [statsResult, likeResult, commentResult, imagesResult] = await Promise.all([
     db.from('works').select('likes_count').eq('id', id).single(),
     user ? db.from('work_likes').select('user_id').eq('work_id', id).eq('user_id', user.id) : Promise.resolve({ data: [], error: null }),
-    db.from('work_comments').select('*').eq('work_id', id).order('created_at', { ascending: false })
+    db.from('work_comments').select('id,author_name,body,created_at').eq('work_id', id).order('created_at', { ascending: false }),
+    db.from('work_images').select('image_url,sort_order').eq('work_id', id).order('sort_order')
   ])
   if (selectedWorkId !== id) return
   if (!statsResult.error) workLikes = statsResult.data.likes_count || 0
   if (!likeResult.error) likedByMe = !!user && likeResult.data.some(like => like.user_id === user.id)
   if (!commentResult.error) comments = commentResult.data
   else detailMessage = 'Не удалось загрузить комментарии. Попробуй обновить страницу.'
+  if (!imagesResult.error && imagesResult.data.length) workImages = imagesResult.data
+  else if (work.image_url) workImages = [{ image_url: work.image_url }]
   render()
 }
 
@@ -145,19 +153,43 @@ async function authSubmit(event) {
 
 async function workSubmit(event) {
   event.preventDefault()
-  const form = new FormData(event.currentTarget), file = form.get('image')
-  let image_url = null
+  const form = new FormData(event.currentTarget), files = form.getAll('images').filter(file => file instanceof File && file.size)
+  const submitButton = $('#workform button[type="submit"]') || $('#workform button')
+  if (submitButton) submitButton.disabled = true
   msg('Сохраняю…')
-  if (file?.size) {
-    if (file.size > 52428800) return msg('Файл больше 50 МБ.', true)
-    const path = user.id + '/' + crypto.randomUUID() + '-' + file.name.replace(/[^\w.-]/g, '_')
-    const upload = await db.storage.from('work-media').upload(path, file)
-    if (upload.error) return msg(upload.error.message, true)
-    image_url = db.storage.from('work-media').getPublicUrl(path).data.publicUrl
+  const uploadedPaths = [], uploadedImages = []
+  const fail = async message => {
+    if (uploadedPaths.length) await db.storage.from('work-media').remove(uploadedPaths)
+    msg(message, true)
+    if (submitButton) submitButton.disabled = false
   }
-  const { error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url })
-  if (error) return msg(error.message, true)
-  modal = ''; await load()
+  try {
+    if (!user) return await fail('Войди в аккаунт, чтобы сохранить работу.')
+    if (files.length > 12) return await fail('К одной работе можно прикрепить до 12 изображений.')
+    if (files.some(file => file.size > 52428800)) return await fail('Каждое изображение должно быть меньше 50 МБ.')
+    for (const file of files) {
+      const path = user.id + '/' + crypto.randomUUID() + '-' + file.name.replace(/[^\w.-]/g, '_')
+      const upload = await db.storage.from('work-media').upload(path, file)
+      if (upload.error) return await fail('Не удалось загрузить «' + file.name + '»: ' + upload.error.message)
+      uploadedPaths.push(path)
+      uploadedImages.push({ image_url: db.storage.from('work-media').getPublicUrl(path).data.publicUrl, sort_order: uploadedImages.length })
+    }
+    const { data: created, error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url: uploadedImages[0]?.image_url || null }).select('*,profiles(display_name,username)').single()
+    if (error) return await fail('Работа не сохранилась: ' + error.message)
+    if (uploadedImages.length) {
+      const { error: imageError } = await db.from('work_images').insert(uploadedImages.map(image => ({ work_id: created.id, ...image })))
+      if (imageError) {
+        await db.from('works').delete().eq('id', created.id)
+        return await fail('Работа создана, но изображения не прикрепились: ' + imageError.message)
+      }
+    }
+    works = [created, ...works.filter(work => !work.demo && work.id !== created.id)]
+    modal = ''
+    render()
+    await load()
+  } catch (error) {
+    await fail('Не удалось сохранить работу. Проверь соединение и попробуй снова.')
+  }
 }
 
 async function profileSubmit(event) {
