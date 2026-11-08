@@ -97,7 +97,7 @@ async function refreshNotifications(userId) {
 }
 
 function dialog() {
-  if (modal === 'auth') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>ТВОЯ ИСКРА НАЧИНАЕТСЯ ЗДЕСЬ</small><h2>' + (mode === 'signup' ? 'Создай свой профиль' : 'С возвращением') + '</h2><p>Сохраняй работы и отмечай каждый творческий день.</p><form id="auth">' + (mode === 'signup' ? '<label>Как тебя называть<input name="display_name" required></label>' : '') + '<label>Электронная почта<input name="email" type="email" required></label><label>Пароль<input name="password" type="password" minlength="6" required></label><button class="primary full">' + (mode === 'signup' ? 'Создать аккаунт' : 'Войти') + '</button><div id="message"></div></form><button id="switch" class="switch">' + (mode === 'signup' ? 'Уже есть аккаунт? Войти' : 'Создать аккаунт') + '</button></section></div>'
+  if (modal === 'auth') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>ТВОЯ ИСКРА НАЧИНАЕТСЯ ЗДЕСЬ</small><h2>' + (mode === 'signup' ? 'Создай свой профиль' : 'С возвращением') + '</h2><p>Сохраняй работы и отмечай каждый творческий день. Вход — только по нику и паролю.</p><form id="auth"><label>Ник<input name="username" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9_]+" required></label><label>Пароль<input name="password" type="password" autocomplete="' + (mode === 'signup' ? 'new-password' : 'current-password') + '" minlength="6" maxlength="128" required></label>' + (mode === 'signup' ? '<small class="field-hint">Ник: латинские буквы, цифры и _. Почта не нужна. Запомни пароль — восстановить его по почте не получится.</small>' : '') + '<button class="primary full">' + (mode === 'signup' ? 'Создать аккаунт' : 'Войти') + '</button><div id="message"></div></form><button id="switch" class="switch">' + (mode === 'signup' ? 'Уже есть аккаунт? Войти' : 'Создать аккаунт') + '</button></section></div>'
   if (modal === 'work') return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>НОВАЯ ГЛАВА</small><h2>Добавить работу</h2><form id="workform"><label>Название<input name="title" required maxlength="120"></label><label>Раздел<select name="category_id">' + cats.slice(1).map(category => '<option value="' + category[0] + '">' + category[2] + ' ' + category[1] + '</option>').join('') + '</select></label><label>Коротко о работе<textarea name="description" rows="3"></textarea></label><label>Изображения<input name="images" type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple><small class="field-hint">Можно выбрать несколько изображений — JPG, PNG, WEBP или GIF, до 50 МБ каждое.</small></label><label>Ссылка на проект<input name="project_url" type="url"></label><button class="primary full">Сохранить работу</button><div id="message"></div></form></section></div>'
   return '<div class="shade" id="shade"><section class="modal"><button class="close" data-close>×</button><small>ТВОЯ СТРАНИЦА</small><h2>Настроить профиль</h2><form id="profileform"><label>Имя<input name="display_name" required value="' + esc(profile?.display_name) + '"></label><div class="avatar-editor">' + avatarMarkup(profile, 'profile-avatar') + '</div><label>Аватар<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp,image/gif"><small class="field-hint">Загрузи фото или рисунок для профиля.</small></label><label>Имя пользователя<input name="username" pattern="[A-Za-z0-9_]+" value="' + esc(profile?.username) + '"></label><label>О себе<textarea name="bio">' + esc(profile?.bio) + '</textarea></label><button class="primary full">Сохранить профиль</button><div id="message"></div></form><button id="signout">Выйти из аккаунта</button></section></div>'
 }
@@ -285,12 +285,16 @@ async function submitComment(body, parentId) {
 
 async function authSubmit(event) {
   event.preventDefault()
-  const form = new FormData(event.currentTarget), credentials = { email: form.get('email'), password: form.get('password') }
-  const result = mode === 'signup'
-    ? await db.auth.signUp({ ...credentials, options: { data: { display_name: form.get('display_name') } } })
-    : await db.auth.signInWithPassword(credentials)
-  if (result.error) return msg(result.error.message, true)
-  if (mode === 'signup' && !result.data.session) return msg('Проверь почту и подтверди адрес — затем войди.')
+  const form = new FormData(event.currentTarget)
+  const { data, error } = await db.functions.invoke('username-auth', { body: { action: mode, username: String(form.get('username')).trim().toLowerCase(), password: form.get('password') } })
+  if (error) {
+    let message = 'Не удалось выполнить вход. Попробуй ещё раз.'
+    try { const payload = await error.context?.json(); if (payload?.error) message = payload.error } catch {}
+    return msg(message, true)
+  }
+  if (!data?.session?.access_token || !data?.session?.refresh_token) return msg(data?.error || 'Не удалось выполнить вход. Попробуй ещё раз.', true)
+  const session = await db.auth.setSession(data.session)
+  if (session.error) return msg('Аккаунт создан, но вход не завершился. Попробуй войти ещё раз.', true)
   modal = ''; await load()
 }
 
@@ -347,7 +351,7 @@ async function profileSubmit(event) {
     if (upload.error) return msg('Не удалось загрузить аватар: ' + upload.error.message, true)
     avatarUrl = db.storage.from('work-media').getPublicUrl(uploadedPath).data.publicUrl
   }
-  const { error } = await db.from('profiles').update({ display_name: form.get('display_name'), username: form.get('username') || null, bio: form.get('bio'), avatar_url: avatarUrl }).eq('id', user.id)
+  const { error } = await db.from('profiles').update({ display_name: form.get('display_name'), username: String(form.get('username') || '').trim().toLowerCase() || null, bio: form.get('bio'), avatar_url: avatarUrl }).eq('id', user.id)
   if (error) {
     if (uploadedPath) await db.storage.from('work-media').remove([uploadedPath])
     return msg(error.code === '23505' ? 'Это имя пользователя уже занято.' : error.message, true)
