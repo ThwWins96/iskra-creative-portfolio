@@ -174,7 +174,7 @@ async function workSubmit(event) {
       uploadedPaths.push(path)
       uploadedImages.push({ image_url: db.storage.from('work-media').getPublicUrl(path).data.publicUrl, sort_order: uploadedImages.length })
     }
-    const { data: created, error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url: uploadedImages[0]?.image_url || null }).select('*,profiles(display_name,username)').single()
+    const { data: created, error } = await db.from('works').insert({ owner_id: user.id, title: form.get('title'), category_id: form.get('category_id'), description: form.get('description'), project_url: form.get('project_url') || null, image_url: uploadedImages[0]?.image_url || null }).select('*,profiles!works_owner_id_fkey(display_name,username)').single()
     if (error) return await fail('Работа не сохранилась: ' + error.message)
     if (uploadedImages.length) {
       const { error: imageError } = await db.from('work_images').insert(uploadedImages.map(image => ({ work_id: created.id, ...image })))
@@ -210,7 +210,7 @@ async function load() {
     }
     profile = query.data
   } else profile = null
-  const result = await db.from('works').select('*,profiles(display_name,username)').order('created_at', { ascending: false })
+  const result = await db.from('works').select('*,profiles!works_owner_id_fkey(display_name,username)').order('created_at', { ascending: false })
   if (result.data?.length) works = result.data
   else if (!works.some(work => !work.demo)) works = sample
   if (selectedWorkId) await openWork(selectedWorkId)
@@ -219,4 +219,5 @@ async function load() {
 
 db.auth.onAuthStateChange(() => setTimeout(load, 0))
 load()
+
 
