@@ -1,2 +1,0 @@
-{"name":"workfolio","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"dependencies":{"@supabase/supabase-js":"2.57.4"},"devDependencies":{"vite":"7.1.7"}}
-
